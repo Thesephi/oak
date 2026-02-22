@@ -1138,10 +1138,11 @@ Deno.test({
     const GRACEFUL_TIME = 1000;
     let timer: number | undefined;
     const raceResult = await Promise.race([
-      new Promise(async (resolve) => {
-        await p;
-        clearTimeout(timer);
-        resolve("resolved cleanly");
+      new Promise((resolve) => {
+        p.then(() => {
+          clearTimeout(timer);
+          resolve("resolved cleanly");
+        });
       }),
       new Promise((resolve) =>
         timer = setTimeout(
