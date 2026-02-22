@@ -1154,6 +1154,7 @@ Deno.test({
       raceResult === "resolved cleanly",
       `'listen promise' should resolve before ${GRACEFUL_TIME} ms`,
     );
+    teardown();
   },
 });
 
