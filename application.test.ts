@@ -1116,7 +1116,7 @@ Deno.test({
     const { signal } = controller;
     const p = app.listen({ signal });
     controller.abort();
-    assertRejects(
+    await assertRejects(
       async () => await p,
       "aborted prematurely before 'listen' event",
     );
