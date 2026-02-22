@@ -1134,7 +1134,7 @@ Deno.test({
     });
     const { signal } = controller;
     const p = app.listen({ signal });
-    app.addEventListener("listen", async () => controller.abort());
+    app.addEventListener("listen", () => controller.abort());
     const GRACEFUL_TIME = 1000;
     let timer: number | undefined;
     const raceResult = await Promise.race([
