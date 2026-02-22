@@ -1,5 +1,23 @@
 # oak Change Log
 
+## Version 17.2.0
+
+- feat: add idleTimeout for websocket (#702)
+- fix: update for Uint8Array being generic (#705)
+- chore: fix publish workflow (#706)
+- docs: prefer bare specifiers (#704)
+
+## Version 17.1.6
+
+- fix: address ReDoS vulnerability in headers (#700)
+- chore: remove v1.x deno from ci (3e4bf17)
+- chore: ignore two CI failing inspect tests (babb9c5)
+
+## Version 17.1.5
+
+- fix: don't return true for isNode() under Deno (#695)
+- tests: add uploading test results to CI (baa38fa)
+
 ## Version 17.1.4
 
 - fix: close file on readAll exception (#682)

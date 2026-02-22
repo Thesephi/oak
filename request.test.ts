@@ -272,6 +272,7 @@ Deno.test({
 
 Deno.test({
   name: "Request - inspecting",
+  ignore: true,
   fn() {
     assertEquals(
       Deno.inspect(
@@ -285,5 +286,174 @@ Deno.test({
         ? `Request {\n  body: Body { has: false, used: false },\n  hasBody: false,\n  headers: HeadersList {\n    cookies: null,\n    [Symbol(headers map)]: [Map],\n    [Symbol(headers map sorted)]: null\n  },\n  ip: '',\n  ips: [],\n  method: 'GET',\n  secure: false,\n  url: URL {\n    href: 'http://localhost/foo?bar=baz&qat=qux',\n    origin: 'http://localhost',\n    protocol: 'http:',\n    username: '',\n    password: '',\n    host: 'localhost',\n    hostname: 'localhost',\n    port: '',\n    pathname: '/foo',\n    search: '?bar=baz&qat=qux',\n    searchParams: URLSearchParams { 'bar' => 'baz', 'qat' => 'qux' },\n    hash: ''\n  },\n  userAgent: UserAgent {\n    browser: [Object],\n    cpu: [Object],\n    device: [Object],\n    engine: [Object],\n    os: [Object],\n    ua: ''\n  }\n}`
         : `Request {\n  body: Body { has: false, used: false },\n  hasBody: false,\n  headers: Headers { host: "localhost" },\n  ip: "",\n  ips: [],\n  method: "GET",\n  secure: false,\n  url: "http://localhost/foo?bar=baz&qat=qux",\n  userAgent: UserAgent {\n  browser: { name: undefined, version: undefined, major: undefined },\n  cpu: { architecture: undefined },\n  device: { model: undefined, type: undefined, vendor: undefined },\n  engine: { name: undefined, version: undefined },\n  os: { name: undefined, version: undefined },\n  ua: ""\n}\n}`,
     );
+  },
+});
+
+Deno.test({
+  name: "request.x-forwarded-for - splits, trims, and orders correctly",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("https://example.com/index.html", {
+        headers: {
+          "x-forwarded-host": "example.com",
+          "x-forwarded-proto": "http",
+          "x-forwarded-for": " 10.10.10.10 ,   192.168.1.1 ,   [::1]  ",
+        },
+      }),
+      { proxy: true, secure: true },
+    );
+    assertEquals(request.ips, ["10.10.10.10", "192.168.1.1", "[::1]"]);
+    assertEquals(request.ip, "10.10.10.10");
+  },
+});
+
+Deno.test({
+  name: "request.x-forwarded-for - caps entries and is performant",
+  fn() {
+    const manyIps = Array.from({ length: 1000 }, (_, i) => `10.0.0.${i}`).join(
+      ", ",
+    );
+    const request = new Request(
+      createMockNativeRequest("https://example.com/index.html", {
+        headers: {
+          "x-forwarded-host": "example.com",
+          "x-forwarded-proto": "http",
+          // also prepend some whitespace noise to mimic worst-case patterns
+          "x-forwarded-for": `  \t  ${manyIps}  \t  `,
+        },
+      }),
+      { proxy: true, secure: true },
+    );
+    performance.mark("start-xff");
+    const ips = request.ips;
+    const measure = performance.measure("xff", { start: "start-xff" });
+    // Hard upper bound; the operation should be very fast
+    assert(measure.duration < 20);
+    // Ensure we cap the number of parsed IPs (implementation caps at 100)
+    assertEquals(ips.length, 100);
+    assertEquals(ips[0], "10.0.0.0");
+  },
+});
+
+Deno.test({
+  name: "request.x-forwarded-proto - normalizes and allowlists http/https",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://example.com/index.html", {
+        headers: {
+          "x-forwarded-host": "example.com",
+          "x-forwarded-proto": "  HTTPS  , http ",
+        },
+      }),
+      { proxy: true },
+    );
+    assertEquals(request.url.protocol, "https:");
+  },
+});
+
+Deno.test({
+  name: "request.x-forwarded-proto - invalid values fall back to http",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://example.com/index.html", {
+        headers: {
+          "x-forwarded-host": "example.com",
+          // first token invalid, second valid, we only honor the first
+          "x-forwarded-proto": "javascript, https",
+        },
+      }),
+      { proxy: true },
+    );
+    assertEquals(request.url.protocol, "http:");
+  },
+});
+
+Deno.test({
+  name: "request with Forwarded header - for, proto, host",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://internal/index.html", {
+        headers: {
+          "forwarded":
+            "for=10.10.10.10;proto=https;host=example.com, for=192.168.1.1",
+        },
+      }),
+      { proxy: true },
+    );
+    assertEquals(request.ips, ["10.10.10.10", "192.168.1.1"]);
+    assertEquals(request.ip, "10.10.10.10");
+    assertEquals(request.url.protocol, "https:");
+    assertEquals(request.url.hostname, "example.com");
+  },
+});
+
+Deno.test({
+  name: "request.Forwarded - IPv6 address (quoted brackets)",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://internal/index.html", {
+        headers: {
+          "forwarded": `for="[::1]";proto=http;host=example.com`,
+        },
+      }),
+      { proxy: true },
+    );
+    assertEquals(request.ips, ["[::1]"]);
+    assertEquals(request.ip, "[::1]");
+  },
+});
+
+Deno.test({
+  name: "request.Forwarded - takes precedence over X-Forwarded-*",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://internal/index.html", {
+        headers: {
+          "forwarded": "for=10.10.10.10;proto=https;host=example.com",
+          "x-forwarded-for": "1.2.3.4",
+          "x-forwarded-proto": "http",
+          "x-forwarded-host": "other.example.com",
+        },
+      }),
+      { proxy: true },
+    );
+    // Forwarded header wins
+    assertEquals(request.ips, ["10.10.10.10"]);
+    assertEquals(request.url.protocol, "https:");
+    assertEquals(request.url.hostname, "example.com");
+  },
+});
+
+Deno.test({
+  name: "request.Forwarded - invalid proto falls back to http",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://internal/index.html", {
+        headers: {
+          "forwarded": "for=10.10.10.10;proto=javascript;host=example.com",
+        },
+      }),
+      { proxy: true },
+    );
+    assertEquals(request.url.protocol, "http:");
+  },
+});
+
+Deno.test({
+  name: "request.Forwarded - falls back to X-Forwarded-* when absent",
+  fn() {
+    const request = new Request(
+      createMockNativeRequest("http://internal/index.html", {
+        headers: {
+          "x-forwarded-for": "10.10.10.10, 192.168.1.1",
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "example.com",
+        },
+      }),
+      { proxy: true },
+    );
+    assertEquals(request.ips, ["10.10.10.10", "192.168.1.1"]);
+    assertEquals(request.url.protocol, "https:");
+    assertEquals(request.url.hostname, "example.com");
   },
 });

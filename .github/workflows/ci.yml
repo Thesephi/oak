@@ -7,13 +7,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        version: ["v1.x", canary]
+        version: [canary]
     steps:
       - name: clone repository
         uses: actions/checkout@v4
 
       - name: install deno
-        uses: denoland/setup-deno@v1
+        uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ matrix.version }}
 
